@@ -83,7 +83,7 @@ Variants:
 
 - `Circular { radius: float }`
 - `Elliptical { major: float, minor: float }` — the Dada Mountains "extended glyph" case; `rotation` on the Glyph gives the ellipse its orientation
-- `Polygonal { vertices: [(x, y)], closure_coherence: float }` — arbitrary closed polygon, vertex list in the glyph's local frame, first/last vertex implicitly connected
+- `Polygonal { vertices: [(x, y)] }` — arbitrary closed polygon, vertex list in the glyph's local frame, first/last vertex implicitly connected. Closure quality lives in `Glyph.coherence.closure` like every other boundary kind.
 
 The simulator treats unknown boundary-shape semantics as "circular with a warning" in v1. Behavioral interpretation of polygonal boundaries is deferred; the IR only needs to represent them.
 
@@ -145,7 +145,7 @@ A vector of four independent quality scores, each in `[0, 1]`.
 ```
 Coherence {
   stroke:    float  // line quality
-  closure:   float  // how completely the shape closes (relevant for glyphs especially)
+  closure:   float  // how completely the shape closes
   placement: float  // how close the element is to its ideal position/rotation
   symmetry:  float  // element's contribution to overall glyph symmetry
 }
@@ -275,9 +275,11 @@ The canon's Repetition keystone "continually resets objects affected by the spel
 
 A spell is **structurally valid** if it parses and all referenced IDs resolve. A spell is **active** at a given moment if:
 
-1. All non-half glyphs have `closure` coherence above a simulator-defined threshold (default: 0.95 for v1 stamped components, meaning effectively closed).
+1. All non-half glyphs have `coherence.closure` above a simulator-defined threshold (default: 0.95 for v1 stamped components, meaning effectively closed).
 2. All Halves have their Toggle conditions satisfied (e.g., in contact with their complement).
 3. All Links endpoints resolve to extant glyphs.
+
+Only the glyph's own `coherence.closure` gates activation. Closure values on sub-elements (center, perimeter keystones) are quality signals the simulator may fold into stability, symmetry, or diagnostics, but they do not block a spell from activating.
 
 Activation is a per-frame computation. A spell can become inactive (toggle half lifts, ring breaks) and reactivate without changing its IR.
 
