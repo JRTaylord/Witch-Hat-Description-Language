@@ -46,6 +46,16 @@ Activation is **separate from structure**. A WHDL document describes what was dr
 
 Every spatial property is continuous. "Canonical" is the special case where coherence values are 1.0 and extents match canonical-stamp defaults. The simulator does not distinguish canonical from noisy input — it reads the same fields either way. This is the noise-tolerance commitment: v1 stamped input and v2 freehand input produce IR documents of the same shape.
 
+### Coordinate frames
+
+Every Glyph defines a **local frame** with origin at its `position` and axes rotated by its `rotation`, both expressed in the parent frame. All spatial fields owned by a glyph — boundary geometry (including `Polygonal.vertices`), `center.offset`, perimeter keystone positions, and nested `children` — are expressed in this local frame. To place such a field in the parent frame, the simulator first applies the glyph's rotation, then translates by the glyph's position.
+
+The parent frame for a **top-level glyph** is world coordinates. The parent frame for a **nested glyph** (inside `children`) is the enclosing glyph's local frame.
+
+For a **Half**, the parent frame of `glyph_fragment` is the local frame of the object named by `object_ref` — the fragment moves with the object, which is what makes toggle spells work (lift the foot, the half moves with it). The simulator owns the object→world transform; WHDL stores positions relative to the object only.
+
+**Distances are absolute, not normalized to boundary size.** A perimeter keystone at polar `(0.7, 0)` sits at distance `0.7` from the glyph's geometric center, whether the boundary radius is `1.0` or `2.0`. The boundary describes where the boundary is; it does not rescale the contents. This applies uniformly to `center.offset`, `Keystone.position`, `Polygonal.vertices`, and child `Glyph.position`.
+
 ---
 
 ## Type system
