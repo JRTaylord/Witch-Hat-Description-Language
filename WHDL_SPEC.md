@@ -30,8 +30,8 @@ WHDL is not intended as a hand-authored language. It is a serialization format t
 
 Per the in-universe primer ("An Intro to Magic Glyphs"), every spell is built from three elements. WHDL uses the canon terms:
 
-- **Rune** — the element-bearing component in the center of a glyph. Determines the spell's general effect (fire, water, earth, wind, light, and variants).
-- **Keystone** — a modifier arranged around the rune. Determines the form the magic takes (direction, dispersion, column, etc.).
+- **Rune** — the element-bearing component in the central region of a glyph. Determines the spell's general effect (fire, water, earth, wind, light, and variants). Most glyphs hold a single rune; "mixed" spells (per canon) hold two or more sigils sharing the central region.
+- **Keystone** — a modifier arranged around the central region. Determines the form the magic takes (direction, dispersion, column, etc.).
 - **Glyph** — the enclosing boundary. The spell activates when the glyph is closed. Also the unit of containment for nesting.
 
 A complete spell consists of one or more glyphs, optionally containing nested glyphs, connected by links or split across object-bound halves for toggle spells.
@@ -48,13 +48,13 @@ Every spatial property is continuous. "Canonical" is the special case where cohe
 
 ### Coordinate frames
 
-Every Glyph defines a **local frame** with origin at its `position` and axes rotated by its `rotation`, both expressed in the parent frame. All spatial fields owned by a glyph — boundary geometry (including `Polygonal.vertices`), `center.offset`, perimeter keystone positions, and nested `children` — are expressed in this local frame. To place such a field in the parent frame, the simulator first applies the glyph's rotation, then translates by the glyph's position.
+Every Glyph defines a **local frame** with origin at its `position` and axes rotated by its `rotation`, both expressed in the parent frame. All spatial fields owned by a glyph — boundary geometry (including `Polygonal.vertices`), each sigil's `offset`, perimeter keystone positions, and nested `children` — are expressed in this local frame. To place such a field in the parent frame, the simulator first applies the glyph's rotation, then translates by the glyph's position.
 
 The parent frame for a **top-level glyph** is world coordinates. The parent frame for a **nested glyph** (inside `children`) is the enclosing glyph's local frame.
 
 For a **Half**, the parent frame of `glyph_fragment` is the local frame of the object named by `object_ref` — the fragment moves with the object, which is what makes toggle spells work (lift the foot, the half moves with it). The simulator owns the object→world transform; WHDL stores positions relative to the object only.
 
-**Distances are absolute, not normalized to boundary size.** A perimeter keystone at polar `(0.7, 0)` sits at distance `0.7` from the glyph's geometric center, whether the boundary radius is `1.0` or `2.0`. The boundary describes where the boundary is; it does not rescale the contents. This applies uniformly to `center.offset`, `Keystone.position`, `Polygonal.vertices`, and child `Glyph.position`.
+**Distances are absolute, not normalized to boundary size.** A perimeter keystone at polar `(0.7, 0)` sits at distance `0.7` from the glyph's geometric center, whether the boundary radius is `1.0` or `2.0`. The boundary describes where the boundary is; it does not rescale the contents. This applies uniformly to each sigil's `offset`, `Keystone.position`, `Polygonal.vertices`, and child `Glyph.position`.
 
 ---
 
@@ -81,7 +81,7 @@ Fields:
 - `boundary` — tagged union describing the shape of the enclosing ring (see Boundary below)
 - `rotation` — radians, rotation of the boundary around its position
 - `coherence` — Coherence vector for the boundary itself (stroke quality, closure, etc.)
-- `center` — the Center slot (Rune or center-eligible Keystone, with offset; see below)
+- `sigils` — array of Center occupants. At least one. Single-sigil spells (the common case) are a length-1 array; mixed spells with multiple sigils share the central region (see Sigils slot below).
 - `perimeter` — array of Keystones arranged around the glyph center
 - `children` — array of nested Glyphs, positioned in this glyph's local frame
 
@@ -97,9 +97,9 @@ Variants:
 
 The simulator treats unknown boundary-shape semantics as "circular with a warning" in v1. Behavioral interpretation of polygonal boundaries is deferred; the IR only needs to represent them.
 
-### Center slot
+### Sigils slot
 
-The center of a Glyph is a tagged union of element kinds, wrapped in a container that carries the center's own spatial properties.
+A Glyph holds a list of sigil placements in its central region. Per canon (Spells page), "Mixed spells are spells consisting of two or more separate sigils" — so the slot is genuinely a list, not a singleton-with-an-array-shape. Each placement is a `Center` wrapper carrying its own positioning:
 
 ```
 Center {
@@ -119,11 +119,13 @@ Rune          { kind: "Rune",          rune_kind:     RuneKind     }
 CenterKeystone { kind: "CenterKeystone", keystone_kind: KeystoneKind }
 ```
 
+**Single-sigil spells** (the common case — pyreball, watershot, repetition seal) are a length-1 `sigils` array. **Multi-sigil "mixed" spells** are length-2-or-more, with each sigil at its own offset so they don't geometrically overlap. Order in the array is not semantic; the simulator treats sigils as an unordered set.
+
 **Rune** — element sigil. Kind is one of the canonical rune kinds (see enumerations below). Per canon there is no reversed-rune effect, so a `reversed: true` Rune is structurally legal but ignored by the simulator (a warning may be emitted).
 
-**CenterKeystone** — a Keystone drawn from a whitelisted subset that can occupy the center slot in place of a Rune. Per the wiki: "certain signs, such as vision, repetition, and billowing can serve the purpose of sigil within their respective spells." The whitelist in v1: `{Repetition, Billowing, Vision, Enlarge, Rain, Bird, DancingPuppet, Weave}`. Center-slot eligibility lives in keystone metadata (data, not grammar), so adding new eligible keystones does not require IR changes. A center-slot keystone behaves like a perimeter keystone with respect to `rotation` and `reversed`; it just sits in the central spatial slot.
+**CenterKeystone** — a Keystone drawn from a whitelisted subset that can occupy a sigil slot in place of a Rune. Per the wiki: "certain signs, such as vision, repetition, and billowing can serve the purpose of sigil within their respective spells." The whitelist in v1: `{Repetition, Billowing, Vision, Enlarge, Rain, Bird, DancingPuppet, Weave}`. Center-slot eligibility lives in keystone metadata (data, not grammar), so adding new eligible keystones does not require IR changes. A center-slot keystone behaves like a perimeter keystone with respect to `rotation` and `reversed`; it just sits in a sigil slot.
 
-**Offset.** Per the primer's Dada Mountains example, the rune can be offset from the geometric center of the glyph and the spell still executes — producing different behavior. Offset is polar from the glyph's geometric center. Default `(0, 0)`.
+**Offset.** Per the primer's Dada Mountains example, a sigil can be offset from the geometric center of the glyph and the spell still executes — producing different behavior. Offset is polar from the glyph's geometric center. Default `(0, 0)`. In multi-sigil spells, each sigil's offset positions it within the central region; sigils with offset `(0, 0)` would geometrically collide and is structurally legal but a `SigilCollision` warning is emitted.
 
 ### `Keystone`
 
@@ -271,7 +273,7 @@ KeystoneMetadata {
 The simulator computes these at evaluation time. They are not stored in the IR.
 
 - **Aspect ratio** (Glyph, Keystone, Rune): `extent.major / extent.minor`.
-- **Eccentricity** (Glyph): `{ magnitude: offset_distance / boundary_minor_extent, direction: offset_angle }`. Characterizes how off-center the rune is.
+- **Eccentricity** (per sigil): `{ magnitude: offset_distance / boundary_minor_extent, direction: offset_angle }`. Characterizes how off-center each sigil is. For a single-sigil spell this is the spell's directionality cue (Dada Mountains); for multi-sigil spells the simulator may sum, average, or otherwise combine per-sigil eccentricities — that's a simulator policy.
 - **Symmetry score** (Glyph): computed by testing keystone positions against candidate symmetry groups (C_n for radial, D_1 for bilateral). Score is max over candidate groups; asymmetric spells score low against all groups.
 - **Extent uniformity** (Glyph): consistency of extent across same-kind keystones within a single glyph. Canon-attested failure mode (Coco's first glyph: one keystone longer than the rest caused unintended behavior).
 
@@ -325,14 +327,16 @@ Example — pyreball with four radially-symmetric column keystones:
       "boundary": { "kind": "Circular", "radius": 1.0 },
       "rotation": 0,
       "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 },
-      "center": {
-        "element": { "kind": "Rune", "rune_kind": "Fire" },
-        "offset": [0, 0],
-        "rotation": 0,
-        "reversed": false,
-        "extent": { "major": 0.3, "minor": 0.3 },
-        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
-      },
+      "sigils": [
+        {
+          "element": { "kind": "Rune", "rune_kind": "Fire" },
+          "offset": [0, 0],
+          "rotation": 0,
+          "reversed": false,
+          "extent": { "major": 0.3, "minor": 0.3 },
+          "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
+        }
+      ],
       "perimeter": [
         {
           "kind": "Column",
@@ -392,12 +396,9 @@ spell {
     rotation: 0
     coherence: { stroke: 1.0, closure: 1.0, placement: 1.0, symmetry: 1.0 }
 
-    center: rune(fire) {
-      offset: polar(0, 0)
-      rotation: 0
-      extent: { major: 0.3, minor: 0.3 }
-      coherence: { stroke: 1.0, closure: 1.0, placement: 1.0, symmetry: 1.0 }
-    }
+    sigils: [
+      sigil rune(fire) @ polar(0, 0) { rotation: 0, reversed: false, extent: { 0.3, 0.3 }, coherence: { stroke: 1.0, closure: 1.0, placement: 1.0, symmetry: 1.0 } },
+    ]
 
     perimeter: [
       keystone column @ polar(0.7, 0°)    { rotation: 0°,   extent: { 0.4, 0.1 }, reversed: false },
@@ -428,14 +429,16 @@ Rune offset east by 40% of glyph radius; one column keystone extended along the 
     "boundary": { "kind": "Circular", "radius": 1.0 },
     "rotation": 0,
     "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 },
-    "center": {
-      "element": { "kind": "Rune", "rune_kind": "Fire" },
-      "offset": [0.4, 0],
-      "rotation": 0,
-      "reversed": false,
-      "extent": { "major": 0.3, "minor": 0.3 },
-      "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
-    },
+    "sigils": [
+      {
+        "element": { "kind": "Rune", "rune_kind": "Fire" },
+        "offset": [0.4, 0],
+        "rotation": 0,
+        "reversed": false,
+        "extent": { "major": 0.3, "minor": 0.3 },
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
+      }
+    ],
     "perimeter": [
       { "kind": "Column", "position": [0.9, 0], "rotation": 0,
         "extent": { "major": 0.6, "minor": 0.1 }, "reversed": false,
@@ -458,7 +461,7 @@ Rune offset east by 40% of glyph radius; one column keystone extended along the 
 
 ### Preserve-food spell (repetition, state hook, target)
 
-Repetition keystone in center slot (no rune), three collection keystones in radial symmetry, target is a bread loaf.
+Single sigil is a Repetition keystone (no rune), three collection keystones in radial symmetry, target is a bread loaf.
 
 ```json
 {
@@ -469,14 +472,16 @@ Repetition keystone in center slot (no rune), three collection keystones in radi
     "boundary": { "kind": "Circular", "radius": 1.0 },
     "rotation": 0,
     "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 },
-    "center": {
-      "element": { "kind": "CenterKeystone", "keystone_kind": "Repetition" },
-      "offset": [0, 0],
-      "rotation": 0,
-      "reversed": false,
-      "extent": { "major": 0.3, "minor": 0.3 },
-      "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
-    },
+    "sigils": [
+      {
+        "element": { "kind": "CenterKeystone", "keystone_kind": "Repetition" },
+        "offset": [0, 0],
+        "rotation": 0,
+        "reversed": false,
+        "extent": { "major": 0.3, "minor": 0.3 },
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
+      }
+    ],
     "perimeter": [
       { "kind": "Collection", "position": [0.8, 0], "rotation": 0,
         "extent": { "major": 0.2, "minor": 0.2 }, "reversed": false,
@@ -494,7 +499,52 @@ Repetition keystone in center slot (no rune), three collection keystones in radi
 }
 ```
 
-Simulator at evaluation time: sees the center element is a Repetition keystone, checks metadata, sees `ReadStateHistory` + `WriteStateHistory` capabilities, wires up the StateHistory interface for `bread_loaf`, pins its state at activation time.
+Simulator at evaluation time: walks `sigils`, sees the only sigil is a Repetition keystone, checks metadata, sees `ReadStateHistory` + `WriteStateHistory` capabilities, wires up the StateHistory interface for `bread_loaf`, pins its state at activation time.
+
+### Mixed spell (two sigils in one glyph)
+
+A two-sigil mixed spell — fire and water sigils sharing the central region, with column keystones around them. Per canon's "Mixed spells are spells consisting of two or more separate sigils." Sigils are offset symmetrically about the geometric center so they don't collide.
+
+```json
+{
+  "target": null,
+  "glyphs": [{
+    "id": "g1",
+    "position": [0, 0],
+    "boundary": { "kind": "Circular", "radius": 1.0 },
+    "rotation": 0,
+    "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 },
+    "sigils": [
+      {
+        "element": { "kind": "Rune", "rune_kind": "Fire" },
+        "offset": [0.25, 0],
+        "rotation": 0, "reversed": false,
+        "extent": { "major": 0.25, "minor": 0.25 },
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
+      },
+      {
+        "element": { "kind": "Rune", "rune_kind": "Water" },
+        "offset": [0.25, 3.1416],
+        "rotation": 0, "reversed": false,
+        "extent": { "major": 0.25, "minor": 0.25 },
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
+      }
+    ],
+    "perimeter": [
+      { "kind": "Column", "position": [0.8, 1.5708], "rotation": 1.5708,
+        "extent": { "major": 0.4, "minor": 0.1 }, "reversed": false,
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 } },
+      { "kind": "Column", "position": [0.8, 4.7124], "rotation": 4.7124,
+        "extent": { "major": 0.4, "minor": 0.1 }, "reversed": false,
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 } }
+    ],
+    "children": []
+  }],
+  "halves": [], "links": [], "toggles": []
+}
+```
+
+Simulator: combines the contributions of both sigils per its mixed-element rules (out of scope for the IR). The two sigils produce no `SigilCollision` warning because their offsets place them at distance 0.5 apart.
 
 ### Linked amplification (two identical pyreballs)
 
@@ -548,7 +598,7 @@ Simulator runs link resolution first, then evaluates the pair as amplified.
 A WHDL document is valid if and only if:
 
 1. All `GlyphId`, `HalfId`, and `ObjectRef` references resolve to existing entities (or are `null` where permitted).
-2. Every Glyph has exactly one center slot occupant.
+2. Every Glyph has at least one entry in `sigils`. (Multi-sigil "mixed" spells are valid; an empty sigil list is not.)
 3. A `CenterKeystone` has `kind` in the center-slot whitelist (per keystone metadata).
 4. Every component of every `coherence` block is in `[0, 1]`.
 5. All `extent.major` and `extent.minor` are positive, finite floats.
