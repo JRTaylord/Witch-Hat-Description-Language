@@ -32,15 +32,15 @@ Per the in-universe primer ("An Intro to Magic Glyphs"), every spell is built fr
 
 - **Rune** — the element-bearing component in the central region of a glyph. Determines the spell's general effect (fire, water, earth, wind, light, and variants). Most glyphs hold a single rune; "mixed" spells (per canon) hold two or more sigils sharing the central region.
 - **Keystone** — a modifier arranged around the central region. Determines the form the magic takes (direction, dispersion, column, etc.).
-- **Glyph** — the enclosing boundary. The spell activates when the glyph is closed. Also the unit of containment for nesting.
+- **Glyph** — the enclosing boundary. Also the unit of containment for nesting.
 
-A complete spell consists of one or more glyphs, optionally containing nested glyphs, connected by links or split across object-bound halves for toggle spells.
+A complete spell consists of one or more glyphs, optionally containing nested glyphs, connected by links.
 
 ### What WHDL is
 
-WHDL is a **graph, not a tree**. Glyphs nest structurally (containment), but links between glyphs, and toggle-halves that reference each other across object boundaries, are non-tree relations. Top-level collections are flat; nesting happens within glyphs.
+WHDL is a **static snapshot of a drawn spell**. It describes geometry, element kinds, and structural relationships at one moment in time — what is on the page. It does not describe activation, time evolution, contact between objects, or anything that would require a physical simulation step. Toggle-style spells (Sylph Shoes, glowstone path) and any other behavior that depends on object motion or contact are out of scope; if they're ever needed, they will be modelled by a separate runtime layer that consumes WHDL, not inside WHDL itself.
 
-Activation is **separate from structure**. A WHDL document describes what was drawn. A second pass resolves which glyphs are closed, which halves are touching, and whether the spell is currently active. A spell with an unclosed ring is a valid WHDL document — just an inactive spell.
+WHDL is a **graph, not a tree**. Glyphs nest structurally (containment), and links between glyphs are non-tree relations. Top-level collections are flat; nesting happens within glyphs.
 
 ### Spatial properties are continuous
 
@@ -51,8 +51,6 @@ Every spatial property is continuous. "Canonical" is the special case where cohe
 Every Glyph defines a **local frame** with origin at its `position` and axes rotated by its `rotation`, both expressed in the parent frame. All spatial fields owned by a glyph — boundary geometry (including `Polygonal.vertices`), each sigil's `offset`, perimeter keystone positions, and nested `children` — are expressed in this local frame. To place such a field in the parent frame, the simulator first applies the glyph's rotation, then translates by the glyph's position.
 
 The parent frame for a **top-level glyph** is world coordinates. The parent frame for a **nested glyph** (inside `children`) is the enclosing glyph's local frame.
-
-For a **Half**, the parent frame of `glyph_fragment` is the local frame of the object named by `object_ref` — the fragment moves with the object, which is what makes toggle spells work (lift the foot, the half moves with it). The simulator owns the object→world transform; WHDL stores positions relative to the object only.
 
 **Distances are absolute, not normalized to boundary size.** A perimeter keystone at polar `(0.7, 0)` sits at distance `0.7` from the glyph's geometric center, whether the boundary radius is `1.0` or `2.0`. The boundary describes where the boundary is; it does not rescale the contents. This applies uniformly to each sigil's `offset`, `Keystone.position`, `Polygonal.vertices`, and child `Glyph.position`.
 
@@ -65,10 +63,8 @@ For a **Half**, the parent frame of `glyph_fragment` is the local frame of the o
 A Spell is the unit of WHDL serialization. It contains:
 
 - `glyphs` — array of top-level Glyphs (not nested inside another Glyph)
-- `halves` — array of Half objects for toggle-style spells
 - `links` — array of Link edges between glyphs
-- `toggles` — array of Toggle edges between halves
-- `target` — optional ObjectRef indicating what object the spell acts on (may be null for ambient spells)
+- `target` — optional ObjectRef indicating what object the spell is drawn on or around (may be null for spells without a specific target)
 
 ### `Glyph`
 
@@ -134,7 +130,7 @@ A perimeter keystone.
 Fields:
 
 - `kind` — KeystoneKind (see enumerations)
-- `position` — (r, θ) polar coordinates, anchored to the glyph's geometric center (not the rune's position, even if the rune is offset)
+- `position` — (r, θ) polar coordinates, anchored to the glyph's geometric center (not to any sigil's position, even if sigils are offset)
 - `rotation` — radians
 - `extent` — Extent { major, minor }
 - `reversed` — boolean. If true, the simulator applies an effect-inversion rule.
@@ -171,21 +167,11 @@ Coherence {
 }
 ```
 
-Rationale for a vector instead of a scalar: each component drives a different simulator failure mode. Low `stroke` → shorter spell duration. Low `closure` on a glyph → spell may not activate. Low `placement` → directional error. Low `symmetry` → instability, possible unintended behavior.
+Rationale for a vector instead of a scalar: each component drives a different simulator failure mode. Low `stroke` → shorter spell duration. Low `closure` on a glyph → degraded or unreliable effect. Low `placement` → directional error. Low `symmetry` → instability, possible unintended behavior.
 
-**For v1 stamped components:** `stroke`, `closure`, `placement` default to 1.0. `symmetry` is always derived by the simulator from keystone positions, never declared.
+**For v1 stamped components:** `stroke`, `closure`, `placement` default to 1.0. `symmetry` is always derived by the simulator from sigil and keystone positions, never declared.
 
 **For v2 freehand (out of scope):** the classifier emits stroke/closure/placement values per classified element.
-
-### `Half`
-
-A glyph fragment bound to an object, completable only by touching its complement. Models toggle-style spells (glowstone path, Sylph Shoes).
-
-Fields:
-
-- `id` — unique identifier
-- `object_ref` — ObjectRef identifying which object this half is drawn on
-- `glyph_fragment` — a Glyph with intentionally incomplete closure (the missing portion is supplied by the other half when contact occurs)
 
 ### `Link`
 
@@ -203,25 +189,9 @@ Link {
 
 `Compose` (dissimilar linked glyphs producing composite effects) is deferred; the canon is ambiguous about this case in v1.
 
-### `Toggle`
-
-An edge between two Halves, with an activation condition.
-
-```
-Toggle {
-  halves: (HalfId, HalfId)
-  condition: ContactCondition
-}
-```
-
-v1 `ContactCondition` variants:
-
-- `Contact` — halves are physically touching
-- `Pressure { threshold: float }` — halves pressed together with force above threshold (glowstone path case)
-
 ### `ObjectRef`
 
-`ObjectRef` is a type alias for `string`. The serialized form is a bare JSON string (`"bread_loaf"`, `"stone_surface"`, `"foot"`), not a wrapped object. The simulator maintains the object registry; WHDL just stores opaque string keys into it. If a richer reference type is ever needed (composite IDs, scopes), it should be introduced as a new tagged type rather than retrofitted into `ObjectRef`.
+`ObjectRef` is a type alias for `string`. The serialized form is a bare JSON string (e.g. `"bread_loaf"`), not a wrapped object. Used only for `Spell.target` — the object the spell is drawn on or around. The simulator maintains the object registry; WHDL just stores opaque string keys into it.
 
 ---
 
@@ -274,7 +244,7 @@ The simulator computes these at evaluation time. They are not stored in the IR.
 
 - **Aspect ratio** (Glyph, Keystone, Rune): `extent.major / extent.minor`.
 - **Eccentricity** (per sigil): `{ magnitude: offset_distance / boundary_minor_extent, direction: offset_angle }`. Characterizes how off-center each sigil is. For a single-sigil spell this is the spell's directionality cue (Dada Mountains); for multi-sigil spells the simulator may sum, average, or otherwise combine per-sigil eccentricities — that's a simulator policy.
-- **Symmetry score** (Glyph): computed by testing keystone positions against candidate symmetry groups (C_n for radial, D_1 for bilateral). Score is max over candidate groups; asymmetric spells score low against all groups.
+- **Symmetry score** (Glyph): computed by testing the combined configuration of sigil placements and perimeter keystone positions against candidate symmetry groups (C_n for radial, D_1 for bilateral). Each element contributes both its position and its kind as a label — a fire sigil opposite a water sigil breaks a symmetry that two fire sigils would preserve, and a Column opposite a Direction sign breaks a symmetry that two Columns would preserve. Score is max over candidate groups; asymmetric spells score low against all groups.
 - **Extent uniformity** (Glyph): consistency of extent across same-kind keystones within a single glyph. Canon-attested failure mode (Coco's first glyph: one keystone longer than the rest caused unintended behavior).
 
 ---
@@ -291,23 +261,11 @@ The canon's Repetition keystone "continually resets objects affected by the spel
 
 ---
 
-## Activation semantics
+## Static-snapshot scope
 
-A spell is **structurally valid** if it parses and all referenced IDs resolve. A spell is **active** at a given moment if:
+WHDL describes the spell as drawn. It does not describe whether the spell is currently doing anything. Activation, ring-closure gating, link resolution order, nested-glyph evaluation order, and any other "what happens at runtime" question is the simulator's concern. The spec exposes the geometry and quality signals the simulator needs to make those decisions, and stops there.
 
-1. All non-half glyphs have `coherence.closure` above a simulator-defined threshold (default: 0.95 for v1 stamped components, meaning effectively closed).
-2. All Halves have their Toggle conditions satisfied (e.g., in contact with their complement).
-3. All Links endpoints resolve to extant glyphs.
-
-Only the glyph's own `coherence.closure` gates activation. Closure values on sub-elements (center, perimeter keystones) are quality signals the simulator may fold into stability, symmetry, or diagnostics, but they do not block a spell from activating.
-
-Activation is a per-frame computation. A spell can become inactive (toggle half lifts, ring breaks) and reactivate without changing its IR.
-
-**Link resolution must run before per-glyph evaluation.** Amplification is non-local: two identical linked glyphs produce more than the sum of their individual outputs. The simulator cannot evaluate glyphs in isolation and sum the results; it must resolve links first, then evaluate.
-
-**Nested glyphs.** Canon is explicitly ambiguous on whether nested glyphs activate independently as their own rings close, or whether all inner glyphs only activate once the outermost ring closes. The wiki's Magic page states this directly: "It isn't clear if spells that are nested inside one another have to be activated simultaneously or if they only activate once the outermost ring is complete." The IR does not encode either policy — both are expressible.
-
-For v1 the simulator implements **inside-out activation**: each glyph's activation is evaluated against its own `coherence.closure` independently, and a child glyph may be active while its parent is not. Effects of active children feed into their parent's evaluation if the parent is also active; otherwise they execute in isolation. This is the more permissive of the two readings and matches the canon examples (Serpent's Bed of Sand, Cloak Spell) where inner and outer rings appear to combine rather than gate each other. The opposite policy ("outermost gates all") may become a per-spell flag in v2 if canon disambiguates. Either way, **child glyphs are evaluated before their parent** so the parent sees resolved child output.
+A `coherence.closure` value below 1.0 means the boundary is drawn imperfectly — that is a fact about the drawing, recorded in the IR. Whether it is "low enough to break the spell" is a runtime threshold, defined by whatever consumes WHDL.
 
 ---
 
@@ -374,9 +332,7 @@ Example — pyreball with four radially-symmetric column keystones:
       "children": []
     }
   ],
-  "halves": [],
-  "links": [],
-  "toggles": []
+  "links": []
 }
 ```
 
@@ -455,7 +411,7 @@ Rune offset east by 40% of glyph radius; one column keystone extended along the 
     ],
     "children": []
   }],
-  "halves": [], "links": [], "toggles": []
+  "links": []
 }
 ```
 
@@ -495,11 +451,11 @@ Single sigil is a Repetition keystone (no rune), three collection keystones in r
     ],
     "children": []
   }],
-  "halves": [], "links": [], "toggles": []
+  "links": []
 }
 ```
 
-Simulator at evaluation time: walks `sigils`, sees the only sigil is a Repetition keystone, checks metadata, sees `ReadStateHistory` + `WriteStateHistory` capabilities, wires up the StateHistory interface for `bread_loaf`, pins its state at activation time.
+Simulator at evaluation time: walks `sigils`, sees the only sigil is a Repetition keystone, checks metadata, sees `ReadStateHistory` + `WriteStateHistory` capabilities, wires up the StateHistory interface for `bread_loaf`. What it does with that interface is the simulator's concern, not WHDL's.
 
 ### Mixed spell (two sigils in one glyph)
 
@@ -540,7 +496,7 @@ A two-sigil mixed spell — fire and water sigils sharing the central region, wi
     ],
     "children": []
   }],
-  "halves": [], "links": [], "toggles": []
+  "links": []
 }
 ```
 
@@ -557,39 +513,13 @@ Two glyphs in the same spell with a link between them.
     { "id": "g1", "position": [0, 0], "...": "same as pyreball above" },
     { "id": "g2", "position": [3, 0], "...": "same as pyreball above" }
   ],
-  "halves": [], "toggles": [],
   "links": [
     { "endpoints": ["g1", "g2"], "kind": "Amplify" }
   ]
 }
 ```
 
-Simulator runs link resolution first, then evaluates the pair as amplified.
-
-### Toggle spell (two halves, contact activation)
-
-```json
-{
-  "target": null,
-  "glyphs": [],
-  "halves": [
-    {
-      "id": "h_top",
-      "object_ref": "stone_surface",
-      "glyph_fragment": { "...": "Glyph with intentional closure gap" }
-    },
-    {
-      "id": "h_bottom",
-      "object_ref": "foot",
-      "glyph_fragment": { "...": "complementary fragment" }
-    }
-  ],
-  "links": [],
-  "toggles": [
-    { "halves": ["h_top", "h_bottom"], "condition": { "kind": "Pressure", "threshold": 10.0 } }
-  ]
-}
-```
+Two identical glyphs, one Amplify edge between them. The simulator decides what the amplification means; WHDL just records the structural fact.
 
 ---
 
@@ -597,17 +527,15 @@ Simulator runs link resolution first, then evaluates the pair as amplified.
 
 A WHDL document is valid if and only if:
 
-1. All `GlyphId`, `HalfId`, and `ObjectRef` references resolve to existing entities (or are `null` where permitted).
+1. All `GlyphId` and `ObjectRef` references resolve to existing entities (or are `null` where permitted).
 2. Every Glyph has at least one entry in `sigils`. (Multi-sigil "mixed" spells are valid; an empty sigil list is not.)
 3. A `CenterKeystone` has `kind` in the center-slot whitelist (per keystone metadata).
 4. Every component of every `coherence` block is in `[0, 1]`.
 5. All `extent.major` and `extent.minor` are positive, finite floats.
 6. `Boundary.Circular.radius` is positive; `Boundary.Elliptical.major/minor` positive; `Boundary.Polygonal.vertices` has at least 3 entries.
 7. Link endpoints reference distinct glyphs. (A glyph may participate in multiple links — chains of identical glyphs amplifying together is canonical.)
-8. Toggle halves reference distinct halves.
-9. Each Half is referenced by **exactly one** Toggle. Per canon every toggle spell is "drawn in two different parts on two separate objects"; multi-half toggles are not attested and modelling them would change the activation semantics. Halves with no toggle are also rejected — an unpaired half is structurally meaningless.
 
-Invalid documents are rejected at parse time. Structural validity is separate from activation; a structurally valid spell may still be inactive (ring open, halves not in contact).
+Invalid documents are rejected at parse time.
 
 ---
 
@@ -619,12 +547,12 @@ Invalid documents are rejected at parse time. Structural validity is separate fr
 - Canonical stamp palette is driven by the keystone metadata table. New keystones added to the table appear in the UI automatically.
 - Handles on each stamped element: drag-position, rotation handle, two extent handles (major and minor axes).
 - Coherence fields for v1 are always 1.0 — UI should not expose them. Their existence in the serialized JSON is for v2 forward compatibility.
-- Ring-closure UX: user draws the glyph boundary; if the boundary is complete, `closure: 1.0`. A "toggle" mode lets the user deliberately leave a gap for Half-style spells.
+- Ring-closure UX: user draws the glyph boundary; if the boundary is complete, `closure: 1.0`. Partial closures are recorded with the corresponding lower value — what that value means at runtime is a downstream concern.
 
 ### Backend (C++ → WASM)
 
 - Parse JSON to IR structs. Keep IR types plain data (no polymorphism beyond tagged unions); pattern-match on kind during evaluation.
-- Two-phase evaluation per frame: (1) link resolution (amplify/cancel) to group evaluable units; (2) per-unit simulation producing vector output.
+- Evaluation order is a simulator concern outside this spec, but the IR's link structure means link resolution (grouping amplified/cancelled glyphs) needs to happen before per-glyph evaluation regardless of policy.
 - Keystone metadata table compiled in (v1). Exposed read-only to the frontend via a separate JSON file shipped with the build.
 - State history: per-object ring buffer, fixed size (suggest 300 frames / 5 seconds at 60fps for v1).
 - Output: `SimulationResult { forces: [(origin, direction, magnitude)], affected_region: Region, stability: float, diagnostics: [Warning] }`.
@@ -665,5 +593,5 @@ whdl/
 - **Forbidden-magic markers.** Some spells (healing, curses, petrification) are in-world forbidden. WHDL does not currently flag these. If the simulator grows to model in-world effects, a forbidden-magic flag on validation output is probably the right addition.
 - **Link amplification formula.** Canon says identical linked spells amplify; specific formula is open. Simulator will need to pick one. This is a simulation concern, not an IR concern.
 - **Animal-sign decorative keystones.** Out of v1 scope; trivial to add as new keystone kinds with `has_effect: false` metadata if needed.
-- **Wrapped spell with gap-fill.** Canon (Magic page) describes wrapping one spell inside another ring and filling the gap between them with a second spell, "even if the spells aren't drawn on the same object." This is structurally distinct from both nesting (spell-inside-spell, both fully closed) and toggle halves (one ring split). v1 does not model it; expressing it cleanly may require either a new edge type or treating it as a constrained two-glyph nesting case. Revisit when a worked example demands it.
-- **Nested-glyph activation policy.** v1 picks inside-out activation; canon is explicitly ambiguous. May become a per-spell flag once canon disambiguates.
+- **Wrapped spell with gap-fill.** Canon (Magic page) describes wrapping one spell inside another ring and filling the gap between them with a second spell. This is structurally distinct from plain nesting (spell-inside-spell, both fully closed) — the "filler" spell sits *between* the two rings, not inside the inner one. v1 does not model it; expressing it cleanly may require either a new edge type or treating it as a constrained two-glyph nesting case. Revisit when a worked example demands it.
+- **Toggle / Half spells.** Sylph Shoes, glowstone path, and similar spells split a glyph across two surfaces and depend on object contact. WHDL is a static-snapshot format and intentionally does not model them. If they're ever needed, the natural place is a separate runtime layer that consumes WHDL plus scene state, not inside the IR.
