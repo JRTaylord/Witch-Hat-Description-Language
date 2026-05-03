@@ -103,17 +103,25 @@ The center of a Glyph is a tagged union of element kinds, wrapped in a container
 
 ```
 Center {
-  element: Rune | CenterKeystone
-  offset: (r, θ)       // polar offset from the glyph's geometric center; default (0, 0)
+  element: Rune | CenterKeystone     // identifier only — see below
+  offset: (r, θ)                     // polar offset from the glyph's geometric center; default (0, 0)
   rotation: radians
+  reversed: bool                     // default false; ignored for Rune (no canonical reversed rune)
   extent: Extent
   coherence: Coherence
 }
 ```
 
-**Rune** — element sigil. Kind is one of the canonical rune kinds (see enumerations below).
+The `element` field is the kind tag only — the spatial fields (`rotation`, `extent`, `coherence`, `reversed`) live on the wrapper, never duplicated inside the tag. This is the single rule that decides which JSON shape is correct in §Serialization.
 
-**CenterKeystone** — a Keystone drawn from a whitelisted subset that can occupy the center slot in place of a Rune. The whitelist in v1: `{Repetition, Billowing, Vision, Enlarge, Rain, Bird, DancingPuppet, Weave}`. Center-slot eligibility lives in keystone metadata (data, not grammar), so adding new eligible keystones does not require IR changes.
+```
+Rune          { kind: "Rune",          rune_kind:     RuneKind     }
+CenterKeystone { kind: "CenterKeystone", keystone_kind: KeystoneKind }
+```
+
+**Rune** — element sigil. Kind is one of the canonical rune kinds (see enumerations below). Per canon there is no reversed-rune effect, so a `reversed: true` Rune is structurally legal but ignored by the simulator (a warning may be emitted).
+
+**CenterKeystone** — a Keystone drawn from a whitelisted subset that can occupy the center slot in place of a Rune. Per the wiki: "certain signs, such as vision, repetition, and billowing can serve the purpose of sigil within their respective spells." The whitelist in v1: `{Repetition, Billowing, Vision, Enlarge, Rain, Bird, DancingPuppet, Weave}`. Center-slot eligibility lives in keystone metadata (data, not grammar), so adding new eligible keystones does not require IR changes. A center-slot keystone behaves like a perimeter keystone with respect to `rotation` and `reversed`; it just sits in the central spatial slot.
 
 **Offset.** Per the primer's Dada Mountains example, the rune can be offset from the geometric center of the glyph and the spell still executes — producing different behavior. Offset is polar from the glyph's geometric center. Default `(0, 0)`.
 
@@ -211,7 +219,7 @@ v1 `ContactCondition` variants:
 
 ### `ObjectRef`
 
-An opaque string reference to a scene object (`"bread_loaf"`, `"stone_surface"`, `"foot"`). The simulator maintains the object registry; WHDL just stores references.
+`ObjectRef` is a type alias for `string`. The serialized form is a bare JSON string (`"bread_loaf"`, `"stone_surface"`, `"foot"`), not a wrapped object. The simulator maintains the object registry; WHDL just stores opaque string keys into it. If a richer reference type is ever needed (composite IDs, scopes), it should be introduced as a new tagged type rather than retrofitted into `ObjectRef`.
 
 ---
 
@@ -295,6 +303,10 @@ Activation is a per-frame computation. A spell can become inactive (toggle half 
 
 **Link resolution must run before per-glyph evaluation.** Amplification is non-local: two identical linked glyphs produce more than the sum of their individual outputs. The simulator cannot evaluate glyphs in isolation and sum the results; it must resolve links first, then evaluate.
 
+**Nested glyphs.** Canon is explicitly ambiguous on whether nested glyphs activate independently as their own rings close, or whether all inner glyphs only activate once the outermost ring closes. The wiki's Magic page states this directly: "It isn't clear if spells that are nested inside one another have to be activated simultaneously or if they only activate once the outermost ring is complete." The IR does not encode either policy — both are expressible.
+
+For v1 the simulator implements **inside-out activation**: each glyph's activation is evaluated against its own `coherence.closure` independently, and a child glyph may be active while its parent is not. Effects of active children feed into their parent's evaluation if the parent is also active; otherwise they execute in isolation. This is the more permissive of the two readings and matches the canon examples (Serpent's Bed of Sand, Cloak Spell) where inner and outer rings appear to combine rather than gate each other. The opposite policy ("outermost gates all") may become a per-spell flag in v2 if canon disambiguates. Either way, **child glyphs are evaluated before their parent** so the parent sees resolved child output.
+
 ---
 
 ## Serialization
@@ -317,6 +329,7 @@ Example — pyreball with four radially-symmetric column keystones:
         "element": { "kind": "Rune", "rune_kind": "Fire" },
         "offset": [0, 0],
         "rotation": 0,
+        "reversed": false,
         "extent": { "major": 0.3, "minor": 0.3 },
         "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
       },
@@ -419,6 +432,7 @@ Rune offset east by 40% of glyph radius; one column keystone extended along the 
       "element": { "kind": "Rune", "rune_kind": "Fire" },
       "offset": [0.4, 0],
       "rotation": 0,
+      "reversed": false,
       "extent": { "major": 0.3, "minor": 0.3 },
       "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
     },
@@ -448,7 +462,7 @@ Repetition keystone in center slot (no rune), three collection keystones in radi
 
 ```json
 {
-  "target": { "kind": "ObjectRef", "ref": "bread_loaf" },
+  "target": "bread_loaf",
   "glyphs": [{
     "id": "g1",
     "position": [0, 0],
@@ -456,9 +470,10 @@ Repetition keystone in center slot (no rune), three collection keystones in radi
     "rotation": 0,
     "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 },
     "center": {
-      "element": { "kind": "CenterKeystone", "keystone_kind": "Repetition", "rotation": 0, "reversed": false },
+      "element": { "kind": "CenterKeystone", "keystone_kind": "Repetition" },
       "offset": [0, 0],
       "rotation": 0,
+      "reversed": false,
       "extent": { "major": 0.3, "minor": 0.3 },
       "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
     },
@@ -510,12 +525,12 @@ Simulator runs link resolution first, then evaluates the pair as amplified.
   "halves": [
     {
       "id": "h_top",
-      "object_ref": { "kind": "ObjectRef", "ref": "stone_surface" },
+      "object_ref": "stone_surface",
       "glyph_fragment": { "...": "Glyph with intentional closure gap" }
     },
     {
       "id": "h_bottom",
-      "object_ref": { "kind": "ObjectRef", "ref": "foot" },
+      "object_ref": "foot",
       "glyph_fragment": { "...": "complementary fragment" }
     }
   ],
@@ -535,11 +550,12 @@ A WHDL document is valid if and only if:
 1. All `GlyphId`, `HalfId`, and `ObjectRef` references resolve to existing entities (or are `null` where permitted).
 2. Every Glyph has exactly one center slot occupant.
 3. A `CenterKeystone` has `kind` in the center-slot whitelist (per keystone metadata).
-4. All `coherence` values are in `[0, 1]`.
+4. Every component of every `coherence` block is in `[0, 1]`.
 5. All `extent.major` and `extent.minor` are positive, finite floats.
 6. `Boundary.Circular.radius` is positive; `Boundary.Elliptical.major/minor` positive; `Boundary.Polygonal.vertices` has at least 3 entries.
-7. Link endpoints reference distinct glyphs.
+7. Link endpoints reference distinct glyphs. (A glyph may participate in multiple links — chains of identical glyphs amplifying together is canonical.)
 8. Toggle halves reference distinct halves.
+9. Each Half is referenced by **exactly one** Toggle. Per canon every toggle spell is "drawn in two different parts on two separate objects"; multi-half toggles are not attested and modelling them would change the activation semantics. Halves with no toggle are also rejected — an unpaired half is structurally meaningless.
 
 Invalid documents are rejected at parse time. Structural validity is separate from activation; a structurally valid spell may still be inactive (ring open, halves not in contact).
 
@@ -599,3 +615,5 @@ whdl/
 - **Forbidden-magic markers.** Some spells (healing, curses, petrification) are in-world forbidden. WHDL does not currently flag these. If the simulator grows to model in-world effects, a forbidden-magic flag on validation output is probably the right addition.
 - **Link amplification formula.** Canon says identical linked spells amplify; specific formula is open. Simulator will need to pick one. This is a simulation concern, not an IR concern.
 - **Animal-sign decorative keystones.** Out of v1 scope; trivial to add as new keystone kinds with `has_effect: false` metadata if needed.
+- **Wrapped spell with gap-fill.** Canon (Magic page) describes wrapping one spell inside another ring and filling the gap between them with a second spell, "even if the spells aren't drawn on the same object." This is structurally distinct from both nesting (spell-inside-spell, both fully closed) and toggle halves (one ring split). v1 does not model it; expressing it cleanly may require either a new edge type or treating it as a constrained two-glyph nesting case. Revisit when a worked example demands it.
+- **Nested-glyph activation policy.** v1 picks inside-out activation; canon is explicitly ambiguous. May become a per-spell flag once canon disambiguates.
