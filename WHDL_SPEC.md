@@ -54,6 +54,14 @@ The parent frame for a **top-level glyph** is world coordinates. The parent fram
 
 **Distances are absolute, not normalized to boundary size.** A perimeter keystone at polar `(0.7, 0)` sits at distance `0.7` from the glyph's geometric center, whether the boundary radius is `1.0` or `2.0`. The boundary describes where the boundary is; it does not rescale the contents. This applies uniformly to each sigil's `offset`, `Keystone.position`, `Polygonal.vertices`, and child `Glyph.position`.
 
+### Numeric and coordinate conventions
+
+- **Floats** are IEEE 754 double precision (float64) throughout the IR and the wire format. Frontends and backends MUST NOT silently downcast.
+- **Angles** are radians, normalized to `[0, 2π)` on input where order matters (the simulator may further normalize for derived computations). Negative angles are accepted on the wire and normalized on parse.
+- **Position units** are abstract — a single coordinate space the frontend and simulator agree on. v1 fixes no physical scale; "1.0" is a unit of "whatever the simulator's world uses." Frontends rendering to canvas pixels apply their own scaling at draw time.
+- **Coordinate handedness** is **+x right, +y up** (math/physics convention), not canvas convention. A frontend that draws on a +y-down canvas MUST flip the y axis when rendering. This convention propagates everywhere — polar angles increase counter-clockwise from +x.
+- **Special floats** (`NaN`, `±Infinity`) are not valid in any field. The validator rejects them.
+
 ---
 
 ## Type system
@@ -62,6 +70,7 @@ The parent frame for a **top-level glyph** is world coordinates. The parent fram
 
 A Spell is the unit of WHDL serialization. It contains:
 
+- `whdl_version` — string identifying the spec version this document conforms to. v1 documents emit `"1.0"`. Required at the top of every serialized Spell so consumers can route on version.
 - `glyphs` — array of top-level Glyphs (not nested inside another Glyph)
 - `links` — array of Link edges between glyphs
 - `target` — optional ObjectRef indicating what object the spell is drawn on or around (may be null for spells without a specific target)
@@ -72,7 +81,7 @@ A Glyph is the enclosing boundary plus its contents.
 
 Fields:
 
-- `id` — unique identifier (string, frontend-generated, stable across serializations of the same spell)
+- `id` — unique identifier. Non-empty ASCII, ≤64 characters, regex `[A-Za-z0-9_-]+`. Frontend-generated, stable across serializations of the same spell. Uniqueness is global within a Spell document (top-level glyphs and nested children share one namespace).
 - `position` — (x, y) in the parent frame. Parent frame is world coordinates for top-level glyphs, or the enclosing glyph's local frame for nested glyphs.
 - `boundary` — tagged union describing the shape of the enclosing ring (see Boundary below)
 - `rotation` — radians, rotation of the boundary around its position
@@ -89,7 +98,7 @@ Variants:
 
 - `Circular { radius: float }`
 - `Elliptical { major: float, minor: float }` — the Dada Mountains "extended glyph" case; `rotation` on the Glyph gives the ellipse its orientation
-- `Polygonal { vertices: [(x, y)] }` — arbitrary closed polygon, vertex list in the glyph's local frame, first/last vertex implicitly connected. Closure quality lives in `Glyph.coherence.closure` like every other boundary kind.
+- `Polygonal { vertices: [(x, y)] }` — arbitrary closed polygon, vertex list in the glyph's local frame, first/last vertex implicitly connected. Vertices are listed **counter-clockwise** under the +y-up convention (see Numeric and coordinate conventions); a clockwise polygon is rejected by the validator. Closure quality lives in `Glyph.coherence.closure` like every other boundary kind.
 
 The simulator treats unknown boundary-shape semantics as "circular with a warning" in v1. Behavioral interpretation of polygonal boundaries is deferred; the IR only needs to represent them.
 
@@ -186,6 +195,17 @@ Link {
 
 - `Amplify` — identical linked glyphs produce amplified effect (canon: "if both spells are identical or similar, their power will increase")
 - `Cancel` — identical-but-reversed glyphs cancel one another
+
+**"Identical" definition (for Amplify and Cancel).** Two glyphs are identical iff:
+
+1. Their `boundary` is the same variant with equal sizes (within float-equality tolerance, simulator-defined; suggested `1e-6` relative).
+2. Their `sigils` collections are equal **as sets**, where each sigil is compared by `element` plus `offset`, `rotation`, `extent`, and `reversed`. Order in the array is not semantic, since §Sigils slot defines `sigils` as an unordered set.
+3. Their `perimeter` collections are equal as sets, where each keystone is compared by `kind`, `position`, `rotation`, `extent`, and `reversed`.
+4. Their `coherence` blocks are not part of identity — a slightly wobbly drawing is still "the same spell" as a clean one.
+
+For `Cancel`, the same comparison applies with `reversed` flipped on every comparable element.
+
+This makes Amplify and Cancel deterministic regardless of array ordering, which matters because frontends may reorder freely and the IR doesn't pin order.
 
 `Compose` (dissimilar linked glyphs producing composite effects) is deferred; the canon is ambiguous about this case in v1.
 
@@ -317,7 +337,7 @@ Six kinds cover the canonical primary five elements plus the one stateful canon 
 - `StateRestore { target: ObjectRef, snapshot_policy: SnapshotPolicy }` — repetition seal. Couples to the State Hooks section.
 - `AreaModifier { region: Region, scalar: float, dimension: Spatial | Temporal }` — enlarge, shrink, dispersion fields.
 
-`EmissionMedium` is itself extensible (`Water`, `Air`, `Sand`, `Stone`, ... — added via metadata, no grammar change). `Region` in v1: `Disc { center, radius } | Box { ... } | Polygon { ... }`.
+`EmissionMedium` v1 set: `Water`, `Air`, `Sand`, `Stone`, `Fire`, `Light`. New mediums are added via the same metadata pattern as keystone kinds; no grammar change. `Region` in v1: `Disc { center, radius } | Box { center, half_extents } | Polygon { vertices: [(x, y)] }`.
 
 ### Extending the kind set
 
@@ -371,6 +391,7 @@ Example — pyreball with four radially-symmetric column keystones:
 
 ```json
 {
+  "whdl_version": "1.0",
   "target": null,
   "glyphs": [
     {
@@ -432,12 +453,15 @@ Example — pyreball with four radially-symmetric column keystones:
 
 Positions are `[r, theta]` in polar (perimeter) or `[x, y]` in cartesian (glyph position in parent frame). Angles in radians.
 
+**Round-trip rules.** Field order in JSON is not normative — parsers MUST accept any object-key order, and serializers MAY emit any order. Two documents are equivalent iff their parsed IR representations are equal under semantic comparison (set-equality for unordered collections like `sigils` and `perimeter`, value-equality for everything else). Byte-identical round-trip is *not* guaranteed; semantic round-trip is. Tools that need stable bytes (content addressing, git diffs) should canonicalize via a documented serializer (suggested: alphabetical key order, no insignificant whitespace, integers without trailing zeros).
+
 ### Text form (for tests and inspection)
 
 A compact text syntax is provided for human readability. It is not the canonical format — round-tripping goes through JSON. Example:
 
 ```
 spell {
+  whdl_version: "1.0"
   target: null
 
   glyph g1 {
@@ -472,6 +496,7 @@ Rune offset east by 40% of glyph radius; one column keystone extended along the 
 
 ```json
 {
+  "whdl_version": "1.0",
   "target": null,
   "glyphs": [{
     "id": "g1",
@@ -515,6 +540,7 @@ Single sigil is a Repetition keystone (no rune), three collection keystones in r
 
 ```json
 {
+  "whdl_version": "1.0",
   "target": "bread_loaf",
   "glyphs": [{
     "id": "g1",
@@ -557,6 +583,7 @@ A two-sigil mixed spell — fire and water sigils sharing the central region, wi
 
 ```json
 {
+  "whdl_version": "1.0",
   "target": null,
   "glyphs": [{
     "id": "g1",
@@ -602,6 +629,7 @@ Two glyphs in the same spell with a link between them.
 
 ```json
 {
+  "whdl_version": "1.0",
   "target": null,
   "glyphs": [
     { "id": "g1", "position": [0, 0], "...": "same as pyreball above" },
@@ -621,13 +649,19 @@ Two identical glyphs, one Amplify edge between them. The simulator decides what 
 
 A WHDL document is valid if and only if:
 
-1. All `GlyphId` and `ObjectRef` references resolve to existing entities (or are `null` where permitted).
-2. Every Glyph has at least one entry in `sigils`. (Multi-sigil "mixed" spells are valid; an empty sigil list is not.)
-3. A `CenterKeystone` has `kind` in the center-slot whitelist (per keystone metadata).
-4. Every component of every `coherence` block is in `[0, 1]`.
-5. All `extent.major` and `extent.minor` are positive, finite floats.
-6. `Boundary.Circular.radius` is positive; `Boundary.Elliptical.major/minor` positive; `Boundary.Polygonal.vertices` has at least 3 entries.
-7. Link endpoints reference distinct glyphs. (A glyph may participate in multiple links — chains of identical glyphs amplifying together is canonical.)
+1. `whdl_version` is present and the parser supports that version.
+2. All `GlyphId` and `ObjectRef` references resolve to existing entities (or are `null` where permitted).
+3. All `GlyphId` strings match the format constraint (non-empty ASCII, ≤64 chars, `[A-Za-z0-9_-]+`) and are unique within the document.
+4. Every Glyph has at least one entry in `sigils`. (Multi-sigil "mixed" spells are valid; an empty sigil list is not.)
+5. A `CenterKeystone` has `kind` in the center-slot whitelist (per keystone metadata).
+6. Every component of every `coherence` block is in `[0, 1]` and is a finite float (no `NaN` / `±Infinity`).
+7. All `extent.major` and `extent.minor` are positive, finite floats.
+8. `Boundary.Circular.radius` is positive; `Boundary.Elliptical.major/minor` positive; `Boundary.Polygonal.vertices` has at least 3 entries and is wound counter-clockwise.
+9. Link endpoints reference distinct glyphs. (A glyph may participate in multiple links — chains of identical glyphs amplifying together is canonical.)
+10. The glyph-nesting graph is a forest (`children` is structural containment; no cycles, no glyph appearing as a descendant of itself or as a child of two different parents).
+11. No field contains `NaN` or `±Infinity`.
+
+A Spell with `glyphs: []` and `links: []` is **valid** — it represents an empty document (blank canvas), which is a meaningful state for the frontend to serialize. Validation accepts it; the simulator returns a `SimulationResult` with `effects: []`.
 
 Invalid documents are rejected at parse time.
 
