@@ -1,0 +1,37 @@
+{
+  "whdl_version": "1.0",
+  "target": null,
+  "glyphs": [{
+    "id": "g1",
+    "position": [0, 0],
+    "boundary": { "kind": "Circular", "radius": 1.0 },
+    "rotation": 0,
+    "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 },
+    "sigils": [
+      {
+        "element": { "kind": "Rune", "rune_kind": "Fire" },
+        "offset": [0.4, 0],
+        "rotation": 0,
+        "reversed": false,
+        "extent": { "major": 0.3, "minor": 0.3 },
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
+      }
+    ],
+    "perimeter": [
+      { "kind": "Column", "position": [0.9, 0], "rotation": 0,
+        "extent": { "major": 0.6, "minor": 0.1 }, "reversed": false,
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 } },
+      { "kind": "Column", "position": [0.9, 1.5708], "rotation": 1.5708,
+        "extent": { "major": 0.4, "minor": 0.1 }, "reversed": false,
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 } },
+      { "kind": "Column", "position": [0.9, 3.1416], "rotation": 3.1416,
+        "extent": { "major": 0.4, "minor": 0.1 }, "reversed": false,
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 } },
+      { "kind": "Column", "position": [0.9, 4.7124], "rotation": 4.7124,
+        "extent": { "major": 0.4, "minor": 0.1 }, "reversed": false,
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 } }
+    ],
+    "children": []
+  }],
+  "links": []
+}

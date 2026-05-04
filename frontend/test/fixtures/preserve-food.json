@@ -1,0 +1,34 @@
+{
+  "whdl_version": "1.0",
+  "target": "bread_loaf",
+  "glyphs": [{
+    "id": "g1",
+    "position": [0, 0],
+    "boundary": { "kind": "Circular", "radius": 1.0 },
+    "rotation": 0,
+    "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 },
+    "sigils": [
+      {
+        "element": { "kind": "CenterKeystone", "keystone_kind": "Repetition" },
+        "offset": [0, 0],
+        "rotation": 0,
+        "reversed": false,
+        "extent": { "major": 0.3, "minor": 0.3 },
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 }
+      }
+    ],
+    "perimeter": [
+      { "kind": "Collection", "position": [0.8, 0], "rotation": 0,
+        "extent": { "major": 0.2, "minor": 0.2 }, "reversed": false,
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 } },
+      { "kind": "Collection", "position": [0.8, 2.0944], "rotation": 2.0944,
+        "extent": { "major": 0.2, "minor": 0.2 }, "reversed": false,
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 } },
+      { "kind": "Collection", "position": [0.8, 4.1888], "rotation": 4.1888,
+        "extent": { "major": 0.2, "minor": 0.2 }, "reversed": false,
+        "coherence": { "stroke": 1.0, "closure": 1.0, "placement": 1.0, "symmetry": 1.0 } }
+    ],
+    "children": []
+  }],
+  "links": []
+}
