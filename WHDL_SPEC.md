@@ -269,6 +269,100 @@ A `coherence.closure` value below 1.0 means the boundary is drawn imperfectly �
 
 ---
 
+## Simulation output contract
+
+WHDL is two-sided like an HDL module: the input side is the drawn spell (everything above), the output side is the result of evaluating it. This section pins the *shape* of the output. The simulator fills in values; consumers (frontend, test harnesses, alternative backends) interpret. Without this contract, every simulator would invent its own output shape and the frontend couldn't render results portably.
+
+### `SimulationResult`
+
+The envelope returned for one evaluation of one WHDL document:
+
+```
+SimulationResult {
+  effects:     [Effect]
+  diagnostics: [Diagnostic]
+  meta:        { version: string, simulator_id: string }
+}
+```
+
+- `effects` — zero or more Effects produced by the spell. An empty array is a valid result (e.g. an inert or unrecognized spell).
+- `diagnostics` — warnings, quality assessments, unmodelled-kind notices. Non-fatal; effects may be present even with diagnostics.
+- `meta` — version and simulator identifier so consumers can route on capability.
+
+### `Effect`
+
+Every effect carries a common envelope plus a kind-specific payload.
+
+```
+Effect {
+  kind:         EffectKind          // tag — see v1 set below
+  payload:      <kind-specific>     // shape determined by kind
+  origin:       Point | ObjectRef   // where it acts
+  duration:     Finite { seconds: float } | Continuous
+  intensity:    float               // 0..1, normalized
+  source_glyph: GlyphId             // back-reference into the input IR
+}
+```
+
+`source_glyph` is the back-reference frontends use to attribute effects to the drawing element that produced them (highlighting, error reporting, animation anchoring). `intensity` is a normalized scale; absolute physical units are simulator-defined.
+
+### v1 `EffectKind` set
+
+Six kinds cover the canonical primary five elements plus the one stateful canon case. The spec fixes field *names and types*; semantic taxonomies (`MaterialState`, `RGB`, `Region`, `SnapshotPolicy`) are simulator-defined sub-schemas the contract treats as opaque.
+
+- `Force { direction: (x, y), magnitude: float, area: Region }` — burst, propulsion, column. Most fire spells, physical-impact spells.
+- `Emission { medium: EmissionMedium, volume_rate: float, direction: (x, y) | null, cone_angle: float }` — water, wind, sand, fluid creation. `direction: null` means radial.
+- `Transform { source_state: MaterialState, target_state: MaterialState, region: Region }` — crush, integrate, billowing.
+- `Illumination { color: RGB, brightness: float, cone: ConeShape | null }` — light beams, beacons, glowstones.
+- `StateRestore { target: ObjectRef, snapshot_policy: SnapshotPolicy }` — repetition seal. Couples to the State Hooks section.
+- `AreaModifier { region: Region, scalar: float, dimension: Spatial | Temporal }` — enlarge, shrink, dispersion fields.
+
+`EmissionMedium` is itself extensible (`Water`, `Air`, `Sand`, `Stone`, ... — added via metadata, no grammar change). `Region` in v1: `Disc { center, radius } | Box { ... } | Polygon { ... }`.
+
+### Extending the kind set
+
+New `EffectKind`s are added the same way new `KeystoneKind`s are: a table entry, no grammar change. The spec's listed v1 kinds are the floor; the simulator's compiled-in registry is authoritative for what it actually emits. Frontends discover available kinds via the simulator's metadata endpoint (parallel to the keystone metadata table).
+
+### Unrecognized spells
+
+When the simulator parses a WHDL document containing a glyph it understands structurally but cannot map to any known effect (forbidden magic, future canon kinds, ambiguous mixed spells), it emits:
+
+```
+Effect {
+  kind:    "Unsupported",
+  payload: { reason: string, glyph_kind_summary: string },
+  origin:  <source glyph's position>,
+  duration: { kind: "Finite", seconds: 0 },
+  intensity: 0,
+  source_glyph: <glyph id>
+}
+```
+
+Plus a `Diagnostic` of `severity: Warning`. Frontends should render this as an inert visual marker, not silently drop the spell. This is the explicit "I see it, I won't model it" channel — it keeps round-trip fidelity even when the simulator's coverage is incomplete.
+
+### `Diagnostic`
+
+```
+Diagnostic {
+  severity: Info | Warning | Error
+  code:     string                // machine-readable: "SigilCollision", "ExtentNonUniform", "Unsupported", ...
+  message:  string                // human-readable
+  source:   GlyphId | null        // which glyph triggered it, if applicable
+}
+```
+
+`Error` severity does not imply zero effects — it means the simulator could not fully evaluate something. Partial results with errors are valid.
+
+### What this contract does *not* fix
+
+- Numerical scales for `magnitude`, `volume_rate`, `brightness`, etc. — simulator-defined.
+- The set of `MaterialState` values, the `RGB` colour space, the `ConeShape` parameterization. — simulator-defined sub-schemas.
+- Rendering. — the contract guarantees the data; visualization is downstream.
+
+The contract is a *floor* on agreement, not a ceiling. Two simulators with different physics can both be conformant if they emit the same shape; they will simply produce different values.
+
+---
+
 ## Serialization
 
 ### JSON (canonical wire format)
@@ -555,7 +649,7 @@ Invalid documents are rejected at parse time.
 - Evaluation order is a simulator concern outside this spec, but the IR's link structure means link resolution (grouping amplified/cancelled glyphs) needs to happen before per-glyph evaluation regardless of policy.
 - Keystone metadata table compiled in (v1). Exposed read-only to the frontend via a separate JSON file shipped with the build.
 - State history: per-object ring buffer, fixed size (suggest 300 frames / 5 seconds at 60fps for v1).
-- Output: `SimulationResult { forces: [(origin, direction, magnitude)], affected_region: Region, stability: float, diagnostics: [Warning] }`.
+- Output: conform to the §Simulation output contract. The backend's compiled-in effect registry is authoritative for which `EffectKind`s it actually emits; new kinds are added via the same metadata mechanism as keystones.
 
 ### Directory sketch
 
