@@ -138,6 +138,10 @@ export function useSpellEditor(initial: Spell): SpellEditor {
   // The SVG-level pointerdown handler delegates by calling startDrag.
   const onElementPointerDown = useCallback((sel: Selection, e: React.PointerEvent<SVGElement>) => {
     e.stopPropagation();
+    // Capture the DOM element now: React nulls out `currentTarget` on the
+    // synthetic event once this handler returns, so the window listeners below
+    // (which fire later) must close over the element itself, not `e`.
+    const target = e.currentTarget;
     startDrag(sel, e);
     // Attach move/up via window listeners so drag continues outside the element.
     const moveListener = (ev: PointerEvent) => {
@@ -146,13 +150,13 @@ export function useSpellEditor(initial: Spell): SpellEditor {
         clientX: ev.clientX,
         clientY: ev.clientY,
         pointerId: ev.pointerId,
-        currentTarget: e.currentTarget,
+        currentTarget: target,
       } as unknown as React.PointerEvent<SVGElement>);
     };
     const upListener = (ev: PointerEvent) => {
       endDrag({
         pointerId: ev.pointerId,
-        currentTarget: e.currentTarget,
+        currentTarget: target,
       } as unknown as React.PointerEvent<SVGElement>);
       window.removeEventListener("pointermove", moveListener);
       window.removeEventListener("pointerup", upListener);
