@@ -1,6 +1,11 @@
 import type { JSX } from "react";
 import { useMemo, useState } from "react";
-import type { Spell } from "../model/types.js";
+import type { KeystoneKind, RuneKind, SigilElement, Spell } from "../model/types.js";
+import type { KeystoneCategory } from "../model/lore.js";
+import {
+  CENTER_KEYSTONE_OPTIONS, KEYSTONE_INFO, KEYSTONE_OPTIONS,
+  RUNE_INFO, RUNE_OPTIONS,
+} from "../model/lore.js";
 import { parse } from "../serialize/parse.js";
 import { validate } from "../serialize/validate.js";
 import { SpellSvg } from "./SpellSvg.js";
@@ -77,20 +82,8 @@ function Editor({
             <button style={styles.btn} onClick={editor.addGlyph}>
               + Glyph
             </button>
-            <button
-              style={styles.btn}
-              onClick={editor.addSigil}
-              disabled={editor.selection.kind === "none"}
-            >
-              + Sigil
-            </button>
-            <button
-              style={styles.btn}
-              onClick={editor.addKeystone}
-              disabled={editor.selection.kind === "none"}
-            >
-              + Keystone
-            </button>
+            <SigilPalette editor={editor} disabled={editor.selection.kind === "none"} />
+            <KeystonePalette editor={editor} disabled={editor.selection.kind === "none"} />
           </div>
           <SpellSvg
             spell={editor.spell}
@@ -156,6 +149,93 @@ function SelectionInfo({ editor }: { editor: ReturnType<typeof useSpellEditor> }
   );
 }
 
+// ─── Element palettes ─────────────────────────────────────────────────────
+
+type Editor = ReturnType<typeof useSpellEditor>;
+
+// A sigil's element is either a Rune or a center-slot-eligible keystone. We
+// encode the dropdown value as "rune:Fire" / "center:Repetition" so a single
+// <select> can offer both, then decode it back to a SigilElement on add.
+function decodeSigilChoice(choice: string): SigilElement {
+  const [tag, kind] = choice.split(":");
+  return tag === "center"
+    ? { kind: "CenterKeystone", keystone_kind: kind as KeystoneKind }
+    : { kind: "Rune", rune_kind: kind as RuneKind };
+}
+
+function sigilLore(choice: string): string {
+  const [tag, kind] = choice.split(":");
+  return tag === "center"
+    ? KEYSTONE_INFO[kind as KeystoneKind].lore
+    : RUNE_INFO[kind as RuneKind].lore;
+}
+
+function SigilPalette({ editor, disabled }: { editor: Editor; disabled: boolean }): JSX.Element {
+  const [choice, setChoice] = useState("rune:Fire");
+  return (
+    <div style={styles.palette}>
+      <select
+        value={choice}
+        onChange={(e) => setChoice(e.target.value)}
+        style={styles.select}
+        disabled={disabled}
+      >
+        <optgroup label="Runes">
+          {RUNE_OPTIONS.map((r) => (
+            <option key={r.kind} value={`rune:${r.kind}`}>{r.kind}</option>
+          ))}
+        </optgroup>
+        <optgroup label="Center keystones">
+          {CENTER_KEYSTONE_OPTIONS.map((k) => (
+            <option key={k.kind} value={`center:${k.kind}`}>{k.kind}</option>
+          ))}
+        </optgroup>
+      </select>
+      <button
+        style={styles.btn}
+        disabled={disabled}
+        onClick={() => editor.addSigil(decodeSigilChoice(choice))}
+      >
+        + Sigil
+      </button>
+      <span style={styles.lore}>{disabled ? "Select a glyph first" : sigilLore(choice)}</span>
+    </div>
+  );
+}
+
+const KEYSTONE_CATEGORIES: readonly KeystoneCategory[] =
+  ["Directional", "Symmetric", "Enclosing", "Other"];
+
+function KeystonePalette({ editor, disabled }: { editor: Editor; disabled: boolean }): JSX.Element {
+  const [kind, setKind] = useState<KeystoneKind>("Column");
+  return (
+    <div style={styles.palette}>
+      <select
+        value={kind}
+        onChange={(e) => setKind(e.target.value as KeystoneKind)}
+        style={styles.select}
+        disabled={disabled}
+      >
+        {KEYSTONE_CATEGORIES.map((cat) => (
+          <optgroup key={cat} label={cat}>
+            {KEYSTONE_OPTIONS.filter((k) => k.category === cat).map((k) => (
+              <option key={k.kind} value={k.kind}>{k.kind}</option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      <button
+        style={styles.btn}
+        disabled={disabled}
+        onClick={() => editor.addKeystone(kind)}
+      >
+        + Keystone
+      </button>
+      <span style={styles.lore}>{disabled ? "Select a glyph first" : KEYSTONE_INFO[kind].lore}</span>
+    </div>
+  );
+}
+
 // ─── Styles ──────────────────────────────────────────────────────────────
 
 const styles: Record<string, React.CSSProperties> = {
@@ -182,7 +262,9 @@ const styles: Record<string, React.CSSProperties> = {
   },
   body: { display: "flex", flex: 1, overflow: "hidden" },
   canvasWrap: { padding: 20, display: "flex", flexDirection: "column", gap: 12 },
-  toolbar: { display: "flex", gap: 8 },
+  toolbar: { display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" },
+  palette: { display: "flex", gap: 8, alignItems: "center" },
+  lore: { fontSize: 12, color: "#888", maxWidth: 360 },
   btn: {
     background: "#1a1a1a", color: "#e0e0e0",
     border: "1px solid #444", padding: "6px 12px", borderRadius: 3,

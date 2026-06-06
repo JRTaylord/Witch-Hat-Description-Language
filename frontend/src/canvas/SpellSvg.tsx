@@ -2,6 +2,7 @@ import type { JSX } from "react";
 import type {
   Boundary, Cartesian, Center, Glyph, Keystone, Polar, Spell,
 } from "../model/types.js";
+import { RUNE_INFO } from "../model/lore.js";
 
 // ─── Coordinate system ──────────────────────────────────────────────────
 //
@@ -189,19 +190,10 @@ function SigilSvg({
 }
 
 function sigilColor(sigil: Center): string {
-  if (sigil.element.kind === "Rune") {
-    switch (sigil.element.rune_kind) {
-      case "Fire": return "#d6452a";
-      case "Water": return "#3a7ad6";
-      case "Earth": return "#8a6238";
-      case "Wind": return "#a3c8a3";
-      case "Light": return "#e8d97a";
-      case "WindUnderfoot": return "#7aa37a";
-      case "Aeriforms": return "#b0c8d8";
-      case "Crystal": return "#c0a8d0";
-    }
-  }
-  return "#aaaaaa"; // CenterKeystone
+  // Colours live in the rune metadata table (single source of truth).
+  return sigil.element.kind === "Rune"
+    ? RUNE_INFO[sigil.element.rune_kind].color
+    : "#aaaaaa"; // CenterKeystone
 }
 
 function KeystoneSvg({

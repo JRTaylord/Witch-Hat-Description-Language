@@ -3,7 +3,8 @@
 
 import { useCallback, useRef, useState } from "react";
 import type {
-  Cartesian, Center, Coherence, Glyph, Keystone, Polar, Spell,
+  Cartesian, Center, Coherence, Glyph, Keystone, KeystoneKind,
+  Polar, SigilElement, Spell,
 } from "../model/types.js";
 import type { Selection } from "./SpellSvg.js";
 
@@ -28,10 +29,10 @@ export interface SpellEditor {
   svgRef: React.RefObject<SVGSVGElement | null>;
   onElementPointerDown: (sel: Selection, e: React.PointerEvent<SVGElement>) => void;
   // Element creation. addSigil/addKeystone act on the currently-selected
-  // glyph (no-op if nothing is selected).
+  // glyph (no-op if nothing is selected) and take the kind to stamp.
   addGlyph: () => void;
-  addSigil: () => void;
-  addKeystone: () => void;
+  addSigil: (element: SigilElement) => void;
+  addKeystone: (kind: KeystoneKind) => void;
 }
 
 const polarToCartesian = ([r, theta]: Polar): Cartesian => [
@@ -149,7 +150,7 @@ export function useSpellEditor(initial: Spell): SpellEditor {
     setSelection({ kind: "glyph", glyphId: id });
   }, [spell]);
 
-  const addSigil = useCallback(() => {
+  const addSigil = useCallback((element: SigilElement) => {
     if (selection.kind === "none") return;
     const glyphId = selection.glyphId;
     const g = findGlyph(spell, glyphId);
@@ -158,13 +159,13 @@ export function useSpellEditor(initial: Spell): SpellEditor {
     setSpell({
       ...spell,
       glyphs: updateGlyphById(spell.glyphs, glyphId, (gg) => ({
-        ...gg, sigils: [...gg.sigils, makeSigil()],
+        ...gg, sigils: [...gg.sigils, makeSigil(element)],
       })),
     });
     setSelection({ kind: "sigil", glyphId, index });
   }, [spell, selection]);
 
-  const addKeystone = useCallback(() => {
+  const addKeystone = useCallback((kind: KeystoneKind) => {
     if (selection.kind === "none") return;
     const glyphId = selection.glyphId;
     const g = findGlyph(spell, glyphId);
@@ -173,7 +174,7 @@ export function useSpellEditor(initial: Spell): SpellEditor {
     setSpell({
       ...spell,
       glyphs: updateGlyphById(spell.glyphs, glyphId, (gg) => ({
-        ...gg, perimeter: [...gg.perimeter, makeKeystone()],
+        ...gg, perimeter: [...gg.perimeter, makeKeystone(kind)],
       })),
     });
     setSelection({ kind: "keystone", glyphId, index });
@@ -231,9 +232,9 @@ const DEFAULT_COHERENCE: Coherence = {
   stroke: 1, closure: 1, placement: 1, symmetry: 1,
 };
 
-function makeSigil(): Center {
+function makeSigil(element: SigilElement): Center {
   return {
-    element: { kind: "Rune", rune_kind: "Fire" },
+    element,
     offset: [0, 0],
     rotation: 0,
     reversed: false,
@@ -242,9 +243,9 @@ function makeSigil(): Center {
   };
 }
 
-function makeKeystone(): Keystone {
+function makeKeystone(kind: KeystoneKind): Keystone {
   return {
-    kind: "Column",
+    kind,
     position: [1, 0], // r=1, theta=0 → sits on the default glyph's perimeter
     rotation: 0,
     extent: { major: 0.4, minor: 0.2 },
@@ -260,7 +261,8 @@ function makeGlyph(id: string): Glyph {
     boundary: { kind: "Circular", radius: 1 },
     rotation: 0,
     coherence: DEFAULT_COHERENCE,
-    sigils: [makeSigil()],
+    // Every glyph needs ≥1 sigil to be valid; default to a Fire rune.
+    sigils: [makeSigil({ kind: "Rune", rune_kind: "Fire" })],
     perimeter: [],
     children: [],
   };
