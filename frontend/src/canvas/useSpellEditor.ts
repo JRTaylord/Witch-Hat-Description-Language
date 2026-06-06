@@ -2,7 +2,9 @@
 // and provides drag handlers that translate pointer motion into IR mutations.
 
 import { useCallback, useRef, useState } from "react";
-import type { Cartesian, Polar, Spell } from "../model/types.js";
+import type {
+  Cartesian, Center, Coherence, Glyph, Keystone, Polar, Spell,
+} from "../model/types.js";
 import type { Selection } from "./SpellSvg.js";
 
 interface DragSession {
@@ -25,6 +27,11 @@ export interface SpellEditor {
   setSelection: (s: Selection) => void;
   svgRef: React.RefObject<SVGSVGElement | null>;
   onElementPointerDown: (sel: Selection, e: React.PointerEvent<SVGElement>) => void;
+  // Element creation. addSigil/addKeystone act on the currently-selected
+  // glyph (no-op if nothing is selected).
+  addGlyph: () => void;
+  addSigil: () => void;
+  addKeystone: () => void;
 }
 
 const polarToCartesian = ([r, theta]: Polar): Cartesian => [
@@ -134,6 +141,44 @@ export function useSpellEditor(initial: Spell): SpellEditor {
     dragRef.current = null;
   }, []);
 
+  // ─── Element creation ──────────────────────────────────────────────────
+
+  const addGlyph = useCallback(() => {
+    const id = freshGlyphId(spell);
+    setSpell({ ...spell, glyphs: [...spell.glyphs, makeGlyph(id)] });
+    setSelection({ kind: "glyph", glyphId: id });
+  }, [spell]);
+
+  const addSigil = useCallback(() => {
+    if (selection.kind === "none") return;
+    const glyphId = selection.glyphId;
+    const g = findGlyph(spell, glyphId);
+    if (!g) return;
+    const index = g.sigils.length; // new sigil lands at the end
+    setSpell({
+      ...spell,
+      glyphs: updateGlyphById(spell.glyphs, glyphId, (gg) => ({
+        ...gg, sigils: [...gg.sigils, makeSigil()],
+      })),
+    });
+    setSelection({ kind: "sigil", glyphId, index });
+  }, [spell, selection]);
+
+  const addKeystone = useCallback(() => {
+    if (selection.kind === "none") return;
+    const glyphId = selection.glyphId;
+    const g = findGlyph(spell, glyphId);
+    if (!g) return;
+    const index = g.perimeter.length;
+    setSpell({
+      ...spell,
+      glyphs: updateGlyphById(spell.glyphs, glyphId, (gg) => ({
+        ...gg, perimeter: [...gg.perimeter, makeKeystone()],
+      })),
+    });
+    setSelection({ kind: "keystone", glyphId, index });
+  }, [spell, selection]);
+
   // We attach move/up listeners to the element that captured the pointer.
   // The SVG-level pointerdown handler delegates by calling startDrag.
   const onElementPointerDown = useCallback((sel: Selection, e: React.PointerEvent<SVGElement>) => {
@@ -172,7 +217,76 @@ export function useSpellEditor(initial: Spell): SpellEditor {
     selection, setSelection,
     svgRef,
     onElementPointerDown,
+    addGlyph, addSigil, addKeystone,
   };
+}
+
+// ─── Element factories ─────────────────────────────────────────────────
+//
+// Defaults are chosen to satisfy validate.ts out of the box: coherence in
+// [0, 1], positive extents, a positive boundary radius, and — crucially — a
+// new glyph ships with one sigil, since the validator rejects empty glyphs.
+
+const DEFAULT_COHERENCE: Coherence = {
+  stroke: 1, closure: 1, placement: 1, symmetry: 1,
+};
+
+function makeSigil(): Center {
+  return {
+    element: { kind: "Rune", rune_kind: "Fire" },
+    offset: [0, 0],
+    rotation: 0,
+    reversed: false,
+    extent: { major: 0.5, minor: 0.5 },
+    coherence: DEFAULT_COHERENCE,
+  };
+}
+
+function makeKeystone(): Keystone {
+  return {
+    kind: "Column",
+    position: [1, 0], // r=1, theta=0 → sits on the default glyph's perimeter
+    rotation: 0,
+    extent: { major: 0.4, minor: 0.2 },
+    reversed: false,
+    coherence: DEFAULT_COHERENCE,
+  };
+}
+
+function makeGlyph(id: string): Glyph {
+  return {
+    id,
+    position: [0, 0],
+    boundary: { kind: "Circular", radius: 1 },
+    rotation: 0,
+    coherence: DEFAULT_COHERENCE,
+    sigils: [makeSigil()],
+    perimeter: [],
+    children: [],
+  };
+}
+
+// Smallest unused "glyph-N" id, checking the whole tree (ids are global).
+function freshGlyphId(spell: Spell): string {
+  const used = new Set<string>();
+  const walk = (glyphs: Glyph[]) => {
+    for (const g of glyphs) {
+      used.add(g.id);
+      walk(g.children);
+    }
+  };
+  walk(spell.glyphs);
+  let n = 1;
+  while (used.has(`glyph-${n}`)) n++;
+  return `glyph-${n}`;
+}
+
+// Return a new glyph forest with `fn` applied to the glyph whose id matches,
+// recursing into children. Like applyPositionUpdate, this never mutates.
+function updateGlyphById(glyphs: Glyph[], id: string, fn: (g: Glyph) => Glyph): Glyph[] {
+  return glyphs.map((g) =>
+    g.id === id ? fn(g) : { ...g, children: updateGlyphById(g.children, id, fn) }
+  );
 }
 
 // ─── Pure mutator ───────────────────────────────────────────────────────

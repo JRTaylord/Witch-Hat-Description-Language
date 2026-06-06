@@ -73,6 +73,25 @@ function Editor({
 
       <div style={styles.body}>
         <div style={styles.canvasWrap}>
+          <div style={styles.toolbar}>
+            <button style={styles.btn} onClick={editor.addGlyph}>
+              + Glyph
+            </button>
+            <button
+              style={styles.btn}
+              onClick={editor.addSigil}
+              disabled={editor.selection.kind === "none"}
+            >
+              + Sigil
+            </button>
+            <button
+              style={styles.btn}
+              onClick={editor.addKeystone}
+              disabled={editor.selection.kind === "none"}
+            >
+              + Keystone
+            </button>
+          </div>
           <SpellSvg
             spell={editor.spell}
             selection={editor.selection}
@@ -163,6 +182,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   body: { display: "flex", flex: 1, overflow: "hidden" },
   canvasWrap: { padding: 20, display: "flex", flexDirection: "column", gap: 12 },
+  toolbar: { display: "flex", gap: 8 },
+  btn: {
+    background: "#1a1a1a", color: "#e0e0e0",
+    border: "1px solid #444", padding: "6px 12px", borderRadius: 3,
+    fontSize: 14, cursor: "pointer",
+  },
   sidebar: {
     flex: 1,
     padding: 20,
